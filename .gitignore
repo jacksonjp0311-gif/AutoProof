@@ -1,0 +1,10 @@
+node_modules/
+.next/
+__pycache__/
+*.py[cod]
+.venv/
+backend/autoproof.db
+data/feedback.jsonl
+.env
+.DS_Store
+
