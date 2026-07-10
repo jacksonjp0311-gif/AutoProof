@@ -26,6 +26,7 @@ export default function Home() {
   const [status, setStatus] = useState("Ready for your next proof step");
   const [busy, setBusy] = useState(false);
   const [counter, setCounter] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const goal = useMemo(() => code.includes(":") ? code.split(":").slice(-1)[0].split(":=")[0].trim() || "n + 0 = n" : "n + 0 = n", [code]);
 
   async function askForSuggestions() {
@@ -37,6 +38,32 @@ export default function Home() {
       setSuggestions(data.tactics.map((item: Suggestion) => ({ ...item, confidence: Math.round((item.confidence <= 1 ? item.confidence * 100 : item.confidence)) })));
       setStatus(data.source === "demo" ? "Suggestions ready · demo reasoning" : "Suggestions ready · model-assisted");
     } catch { setSuggestions(DEMO_SUGGESTIONS); setStatus("Showing local demo suggestions — API is not running."); }
+    finally { setBusy(false); }
+  }
+
+  async function runProof() {
+    setBusy(true); setStatus("Checking your proof…");
+    try {
+      let activeSession = sessionId;
+      if (!activeSession) {
+        const sessionResponse = await fetch(`${API}/api/sessions`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "Playground proof", theorem: goal }),
+        });
+        if (!sessionResponse.ok) throw new Error("Could not start proof session");
+        const session = await sessionResponse.json();
+        activeSession = session.id; setSessionId(session.id);
+      }
+      const appliedTactic = code.trim().split("\n").reverse().find((line) => line.trim() && !line.trim().startsWith("theorem"))?.trim() || selected;
+      const response = await fetch(`${API}/api/apply-tactic`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: activeSession, tactic: appliedTactic, code }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Proof check failed");
+      if (result.ok) setStatus(result.mode === "lean" ? "✓ Lean accepted this proof." : "✓ Demo validation passed — install Lean 4 for compiler verification.");
+      else setStatus(`✕ ${result.diagnostics || "Lean could not validate this proof."}`);
+    } catch (error) { setStatus(`✕ ${error instanceof Error ? error.message : "Could not reach the proof service."}`); }
     finally { setBusy(false); }
   }
 
@@ -70,7 +97,7 @@ export default function Home() {
 
     <section className="workspace">
       <article className="panel editor-panel">
-        <div className="panel-head"><div><span className="file-dot" /> <b>main.lean</b><small>Lean 4</small></div><button className="run" onClick={askForSuggestions} disabled={busy}><span>▶</span> {busy ? "Thinking…" : "Run proof"}</button></div>
+        <div className="panel-head"><div><span className="file-dot" /> <b>main.lean</b><small>Lean 4</small></div><button className="run" onClick={runProof} disabled={busy}><span>▶</span> {busy ? "Checking…" : "Run proof"}</button></div>
         <Editor height="405px" defaultLanguage="plaintext" theme="vs-dark" value={code} onChange={(value) => setCode(value ?? "")} options={{ minimap: { enabled: false }, fontSize: 14, lineHeight: 25, padding: { top: 20 }, scrollBeyondLastLine: false, fontFamily: "'JetBrains Mono', Consolas, monospace" }} />
         <div className="editor-status"><span className="status-dot" /> {status}</div>
       </article>
